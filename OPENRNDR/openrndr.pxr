@@ -1,0 +1,727 @@
+@ /openrndr root:custom {
+  .meta [map graph.comment {Example project integrating with OPENRNDR - https://openrndr.org/
+
+Shift+double-click to see and live edit any component code.
+
+Integration and base components can be seen and live edited under Shared Code.
+Also see the root code to see how custom components are integrated. }]
+  .shared-code [map SHARED.OPENRNDR {package SHARED;
+
+import java.util.List;
+import java.util.function.Consumer;
+import kotlin.Unit;
+import kotlin.jvm.functions.Function1;
+import org.openrndr.*;
+import org.openrndr.color.*;
+import org.openrndr.draw.*;
+import org.openrndr.math.*;
+import org.openrndr.shape.*;
+
+public final class OPENRNDR {
+
+    private OPENRNDR() {
+    }
+
+    static List<Runnable> taskQueue;
+
+    public static RenderTarget createRenderTarget(Program program,
+            int width, int height) {
+        return RenderTargetKt.renderTarget(
+                width,
+                height,
+                1.0,
+                BufferMultisample.Disabled.INSTANCE,
+                Session.Companion.getActive(),
+                builder -> {
+                    builder.colorBuffer(ColorFormat.RGBa, ColorType.FLOAT32);
+                    return Unit.INSTANCE;
+                }
+        );
+    }
+
+    public static void destroy(Object obj) {
+        taskQueue.add(() -> destroyImpl(obj));
+    }
+
+    public static ColorRGBa hsv(double h, double s, double v, double a) {
+        return ColorHSVaKt.hsv(h, s, v, a).toRGBa();
+    }
+
+    public static Rectangle rect(double x, double y, double w, double h) {
+        return new Rectangle(new Vector2(x, y), w, h);
+    }
+
+    public static ColorRGBa rgb(double r, double g, double b, double a) {
+        return ColorRGBaKt.rgb(r, g, b, a);
+    }
+
+    public static ShadeStyle shadeStyle(Consumer<ShadeStyle> builder) {
+        return ShadeStyleKt.shadeStyle(unit(builder::accept));
+    }
+
+    public static Matrix55 tint(ColorRGBa color) {
+        return ColorTransformsKt.tint(color);
+    }
+
+    public static <T> Function1<T, Unit> unit(Consumer<T> consumer) {
+        return v -> {
+            consumer.accept(v);
+            return Unit.INSTANCE;
+        };
+    }
+
+    private static void destroyImpl(Object obj) {
+        try {
+            switch (obj) {
+                case AutoCloseable ac ->
+                    ac.close();
+                default -> {
+                    try {
+                        obj.getClass().getMethod("destroy").invoke(obj);
+                    } catch (NoSuchMethodException ex) {
+                    }
+                }
+            }
+
+        } catch (Throwable t) {
+            throw new UnsupportedOperationException(t);
+        }
+    }
+
+}
+} SHARED.RNDROut {package SHARED;
+
+import org.praxislive.code.userapi.*;
+import org.praxislive.core.code.CoreCodeDelegate;
+import org.openrndr.draw.*;
+
+public class RNDROut extends CoreCodeDelegate {
+
+    @In Data.In<RenderTarget> in;
+
+    @Ref.Subscribe
+    @Inject Ref<Data.Pipe<RenderTarget>> sink;
+
+    @Override
+    public void init() {
+        sink.bind(Data.Pipe::addSource, Data.Pipe::removeSource, in);
+    }
+
+}
+} SHARED.RNDRDraw {package SHARED;
+
+import org.praxislive.code.userapi.*;
+import org.praxislive.core.code.CoreCodeDelegate;
+import org.praxislive.core.services.LogLevel;
+import kotlin.Unit;
+import org.openrndr.*;
+import org.openrndr.draw.*;
+
+public abstract class RNDRDraw extends CoreCodeDelegate {
+
+    public static final String TEMPLATE
+            = """
+              import org.openrndr.*;
+              import org.openrndr.draw.*;
+              import static SHARED.OPENRNDR.*;
+
+                  @Override
+                  public void setup() {
+                  }
+
+                  @Override
+                  public void draw(Drawer d) {
+                     \s
+                  }
+
+              """;
+
+    @In(1) Data.In<RenderTarget> in;
+    @Out(1) Data.Out<RenderTarget> out;
+
+    @Ref.Subscribe
+    @Inject Ref<Program> programRef;
+
+    public Program program;
+
+    @Persist boolean requireSetup;
+
+    @Override
+    public void init() {
+        requireSetup = true;
+        Data.link(in, Data.with(this::process), out);
+    }
+
+    private void process(RenderTarget frame) {
+        try {
+            program = programRef.get();
+            DrawerKt.isolatedWithTarget(program.getDrawer(), frame,
+                    d -> {
+                        if (requireSetup) {
+                            setup();
+                        }
+                        draw(d);
+                        return Unit.INSTANCE;
+                    });
+
+        } catch (Exception ex) {
+            log(LogLevel.ERROR, ex);
+        } finally {
+            program = null;
+            requireSetup = false;
+        }
+    }
+
+    @Override
+    public void update() {
+
+    }
+
+    public void setup() {
+
+    }
+
+    public abstract void draw(Drawer d);
+
+}
+} SHARED.RNDRComposite {package SHARED;
+
+import java.util.List;
+import org.praxislive.code.userapi.*;
+import org.praxislive.core.code.CoreCodeDelegate;
+import org.praxislive.core.services.LogLevel;
+import kotlin.Unit;
+import org.openrndr.*;
+import org.openrndr.draw.*;
+
+public abstract class RNDRComposite extends CoreCodeDelegate {
+
+    public static final String TEMPLATE
+            = """
+              import org.openrndr.*;
+              import org.openrndr.draw.*;
+              import static SHARED.OPENRNDR.*;
+
+                  @Override
+                  public void setup() {
+                  }
+
+                  @Override
+                  public void draw(Drawer d, RenderTarget source) {
+                     \s
+                  }
+
+              """;
+
+    @In(1) Data.In<RenderTarget> in;
+    @In(2) Data.In<RenderTarget> src;
+    @Out(1) Data.Out<RenderTarget> out;
+
+    @Ref.Subscribe
+    @Inject Ref<Program> programRef;
+
+    public Program program;
+
+    @Persist boolean requireSetup;
+
+    @Override
+    public void init() {
+        requireSetup = true;
+        Data.combineWith(this::process)
+                .withSources(in, src)
+                .linkTo(out);
+    }
+
+    private void process(RenderTarget dst, List<RenderTarget> src) {
+        try {
+            program = programRef.get();
+            DrawerKt.isolatedWithTarget(program.getDrawer(), dst,
+                    d -> {
+                        if (requireSetup) {
+                            setup();
+                        }
+                        draw(d, src.get(0).colorBuffer(0));
+                        return Unit.INSTANCE;
+                    });
+
+        } catch (Exception ex) {
+            log(LogLevel.ERROR, ex);
+        } finally {
+            program = null;
+            requireSetup = false;
+        }
+    }
+
+    @Override
+    public void update() {
+    }
+
+    public void setup() {
+    }
+
+    public abstract void draw(Drawer d, ColorBuffer source);
+
+}
+} SHARED.RNDRProgram {package SHARED;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Consumer;
+import org.praxislive.core.MainThread;
+import org.openrndr.ApplicationKt;
+import org.openrndr.Configuration;
+import org.openrndr.Program;
+import org.openrndr.ProgramImplementation;
+
+public class RNDRProgram {
+
+    public static Program createAndStart(MainThread main,
+            Configuration config,
+            Consumer<Boolean> processor) {
+        Program program = new ProgramImpl(processor);
+        main.runLater(() -> {
+            try {
+                ApplicationKt.application(program, config);
+            } finally {
+                try {
+                    processor.accept(Boolean.FALSE);
+                } catch (Exception ex) {
+
+                }
+            }
+        });
+        return program;
+    }
+
+    public static void attachTaskQueue(List<Runnable> taskQueue) {
+        OPENRNDR.taskQueue = taskQueue;
+    }
+    
+    private static class ProgramImpl extends ProgramImplementation {
+
+        private final Consumer<Boolean> processor;
+
+        private ProgramImpl(Consumer<Boolean> processor) {
+            this.processor = Objects.requireNonNull(processor);
+        }
+
+        @Override
+        public void draw() {
+            try {
+                processor.accept(Boolean.TRUE);
+            } catch (Throwable t) {
+                getApplication().exit();
+            }
+        }
+
+    }
+
+}
+} SHARED.RNDRMix {package SHARED;
+
+import org.praxislive.code.userapi.*;
+import org.openrndr.draw.*;
+import static SHARED.OPENRNDR.*;
+
+public class RNDRMix extends RNDRComposite {
+
+    @P(1)
+    BlendMode blendMode;
+    @P(2)
+    @Type.Number(min = 0, max = 1, def = 1)
+    double red;
+    @P(3)
+    @Type.Number(min = 0, max = 1, def = 1)
+    double green;
+    @P(4)
+    @Type.Number(min = 0, max = 1, def = 1)
+    double blue;
+    @P(5)
+    @Type.Number(min = 0, max = 1, def = 1)
+    double alpha;
+
+    @Override
+    public void draw(Drawer d, ColorBuffer source) {
+        d.getDrawStyle().setBlendMode(blendMode);
+        d.getDrawStyle().setColorMatrix(tint(rgb(red, green, blue, alpha)));
+        d.image(source);
+    }
+
+}
+} SHARED.RNDRImage {package SHARED;
+
+import org.praxislive.code.userapi.*;
+import org.praxislive.core.services.LogLevel;
+import org.praxislive.core.types.PResource;
+import org.praxislive.core.types.PString;
+import org.openrndr.draw.*;
+
+public class RNDRImage extends RNDRDraw {
+
+    enum ResizeMode {
+        Stretch, Scale, Crop
+    };
+    
+    @P(1) @Type(PResource.class) Property image;
+    @P(2) ResizeMode resizeMode;
+    @P(3) @Type.Number(min = 0, max = 1, def = 0.5) double alignX, alignY;
+    @P(4) @Type.Number(min = 0, max = 8, def = 1, skew = 4) double zoom;
+    
+    @AuxOut(1)
+    Output ready;
+    @AuxOut(2)
+    Output error;
+
+    @Persist ColorBufferProxy active, pending;
+
+    @Override
+    @Config.Expose("image")
+    public void setup() {
+        image.valuesAs(PString.class)
+                .map(PString::toString)
+                .link(this::updateImage);
+    }
+
+    @Override
+    public void update() {
+        if (pending != null) {
+            switch (pending.getState()) {
+                case LOADED -> {
+                    active = pending;
+                    pending = null;
+                    ready.send();
+                }
+                case ERROR, RETRY -> {
+                    pending = null;
+                    error.send();
+                }
+            }
+        }
+    }
+
+    @Override
+    public void draw(Drawer d) {
+        if (active != null) {
+            ColorBuffer cb = active.getColorBuffer();
+            if (cb != null) {
+                drawImage(d, cb);
+            }
+        }
+    }
+    
+    private void drawImage(Drawer d, ColorBuffer cb) {
+        double width = d.getWidth();
+        double height = d.getHeight();
+        double imageWidth = cb.getWidth();
+        double imageHeight = cb.getHeight();
+        double outWidth = zoom * cb.getWidth();
+        double outHeight = zoom * cb.getHeight();
+        switch (resizeMode) {
+            case Stretch -> {
+                outWidth *= width / imageWidth;
+                outHeight *=  height / imageHeight;
+            }
+            case Scale -> {
+                double r = min(width / imageWidth, height / imageHeight);
+                outWidth *= r;
+                outHeight *= r;
+            }
+        }
+        d.image(cb, alignX * (width - outWidth),
+                alignY * (height - outHeight),
+                outWidth,
+                outHeight);
+    }
+
+    private void updateImage(String uri) {
+        if (uri.isBlank()) {
+            log(LogLevel.INFO, "Clearing image");
+            active = pending = null;
+            ready.send();
+        } else if (active == null || !uri.equals(active.getUrl())) {
+            log(LogLevel.INFO, "Loading image " + uri);
+            pending = ColorBufferProxyKt.imageProxy(uri, true, false);
+            pending.queue();
+        }
+    }
+}
+}]
+  .code {import SHARED.*;
+import org.openrndr.*;
+import org.openrndr.color.*;
+import org.openrndr.draw.*;
+import org.praxislive.core.services.LogLevel;
+import static SHARED.OPENRNDR.*;
+
+    final ColorRGBa CLEAR = rgb(0, 0, 0, 0);
+    final LogLevel LOG_LEVEL = LogLevel.INFO;
+    
+    @P(1) @Type.String(def = "OPENRNDR")
+    String windowTitle;
+    @P(2) @Type.Integer(min = 100, max = 4096, def = 1024)
+    int width;
+    @P(3) @Type.Integer(min = 100, max = 4096, def = 768)
+    int height;
+
+    @Driver Consumer<Boolean> processor = this::process;
+
+    @Ref.Publish
+    @Inject Ref<Program> programRef;
+
+    @Ref.Publish
+    @Inject Ref<Data.Pipe<RenderTarget>> input;
+
+    @Inject Data.Sink<RenderTarget> sink;
+    @Inject List<RenderTarget> rtCache;
+    @Inject List<Runnable> taskQueue;
+
+    @Persist Program program;
+
+    @Override
+    @SupportedTypes(custom = {
+        @CustomType(type = "openrndr:draw", base = RNDRDraw.class,
+                template = RNDRDraw.TEMPLATE),
+        @CustomType(type = "openrndr:composite", base = RNDRComposite.class,
+                template = RNDRComposite.TEMPLATE),
+        @CustomType(type = "openrndr:image", base = RNDRImage.class),
+        @CustomType(type = "openrndr:mix", base = RNDRMix.class),
+        @CustomType(type = "openrndr:out", base = RNDROut.class)
+    })
+    public void init() {
+        RNDRProgram.attachTaskQueue(taskQueue);
+        input.init(Data::identity);
+        sink.onCreate(rt -> {
+            return getRenderTarget();
+        });
+        sink.onClear(rt -> {
+            rt.clearColor(0, CLEAR);
+            return rt;
+        });
+        sink.onAccumulate((dst, src) -> {
+            DrawerKt.isolatedWithTarget(program.getDrawer(), dst, unit(d -> {
+                d.getDrawStyle().setBlendMode(BlendMode.ADD);
+                d.image(src.colorBuffer(0));
+            }));
+            return dst;
+        });
+        sink.onDispose(rt -> {
+            releaseRenderTarget(rt);
+        });
+        Data.link(input.get(), sink.input());
+    }
+
+    @Override
+    public void starting() {
+        System.setProperty("org.openrndr.ignoreShadeStyleErrors", "true");
+        Configuration config = new Configuration();
+        config.setWidth(width);
+        config.setHeight(height);
+        config.setTitle(windowTitle);
+        config.setWindowAlwaysOnTop(true);
+        program = RNDRProgram.createAndStart(
+                find(MainThread.class).orElseThrow(),
+                config,
+                processor);
+        programRef.set(program);
+    }
+
+    @Override
+    public void stopping() {
+        programRef.clear();
+        taskQueue.clear();
+        program = null;
+    }
+
+    @Override
+    public void update() {
+    }
+
+    private void process(boolean active) {
+        if (!active) {
+            tell(self("stop"), "");
+            return;
+        }
+        RenderTarget rt = getRenderTarget();
+        try {
+            rt = sink.process(rt);
+            program.getDrawer().image(rt.colorBuffer(0));
+            while (!taskQueue.isEmpty()) {
+                taskQueue.removeFirst().run();
+            }
+        } catch (Exception ex) {
+            log(ERROR, ex);
+        } finally {
+            releaseRenderTarget(rt);
+        }
+    }
+
+    private RenderTarget getRenderTarget() {
+        if (rtCache.isEmpty()) {
+            log(LOG_LEVEL, "Creating new render target");
+            return createRenderTarget(program,
+                    program.getWidth(), program.getHeight());
+        } else {
+            RenderTarget rt = rtCache.removeLast();
+            rt.clearColor(0, CLEAR);
+            return rt;
+        }
+    }
+
+    private void releaseRenderTarget(RenderTarget rt) {
+        rtCache.add(rt);
+    }
+
+}
+  @ ./out openrndr:out {
+    .meta [map graph.x 928 graph.y 328 graph.comment "openrndr:out defined in Shared Code
+Note that multiple inputs are additive blended"]
+  }
+  @ ./logo openrndr:image {
+    .meta [map graph.x 473 graph.y 438 graph.minimized true graph.comment "openrndr:image
+defined in Shared Code"]
+    .image [file "resources/openrndr-logo.png"]
+    .resize-mode Scale
+    .align-x 0.9
+    .align-y 0.1
+    .zoom 0.3
+  }
+  @ ./logo-overlay openrndr:mix {
+    .meta [map graph.x 668 graph.y 217 graph.minimized true]
+  }
+  @ ./vertices openrndr:draw {
+    .meta [map graph.x 227 graph.y 250 graph.comment "Custom openrndr:draw
+Using Ref to manage a vertex buffer"]
+    .code {extends SHARED.RNDRDraw;
+import SHARED.OPENRNDR;
+import org.openrndr.draw.*;
+import org.openrndr.math.*;
+import static SHARED.OPENRNDR.*;
+
+    @Inject Ref<VertexBuffer> geometry;
+
+    @T boolean regenerate;
+
+    @P @ReadOnly Property hue;
+
+    @Override
+    public void setup() {
+        geometry.init(this::genBuffer)
+                .onDispose(OPENRNDR::destroy);
+        hue.animator().whenDone(a -> a.to(random(-360, 360)).in(10).easeInOut());
+    }
+
+    @Override
+    public void draw(Drawer d) {
+        if (regenerate) {
+            geometry.set(genBuffer());
+            regenerate = false;
+        }
+        d.setFill(hsv(D(hue), 0.6, 0.6, 0.1));
+        VertexBuffer vb = geometry.get();
+        d.vertexBuffer(vb, DrawPrimitive.TRIANGLES, 0, vb.getVertexCount());
+    }
+
+    private VertexBuffer genBuffer() {
+        var format = new VertexFormat();
+        format.position(3);
+        var buffer = VertexBufferKt.vertexBuffer(format, 3 * 100, null);
+        buffer.put(0, unit(bw -> {
+            for (int i = 0; i < buffer.getVertexCount(); i++) {
+                bw.write(new Vector3(random(program.getWidth()),
+                        random(program.getHeight()), 0.00));
+
+            }
+        }));
+        return buffer;
+    }
+
+}
+  }
+  @ ./pulse core:timing:timer {
+    .meta [map graph.x 63 graph.y 217 expose [array period]]
+    .period 0.75
+  }
+  @ ./mixer openrndr:mix {
+    .meta [map graph.x 473 graph.y 217 expose [array blend-mode alpha] graph.minimized true graph.comment "openrndr:mix
+defined in Shared Code"]
+    .blend-mode MAX
+    .alpha 0.8
+  }
+  @ ./shader-rect openrndr:draw {
+    .meta [map graph.x 227 graph.y 426 graph.comment "Custom openrndr:draw
+A rectangle with shader fill"]
+    .code {extends SHARED.RNDRDraw;
+import org.openrndr.draw.Drawer;
+import static SHARED.OPENRNDR.*;
+import org.openrndr.draw.TransformTarget;
+
+    String shader = """
+        float c = cos(c_screenPosition.x * 0.1 + p_time)
+                    * sin(c_screenPosition.y * 0.1 + p_time)
+                    * 0.5 + 0.5;
+        x_fill.rgb *= vec3(c, c, c);
+        """;
+
+    @Override
+    public void draw(Drawer d) {
+        d.setStroke(null);
+        d.setFill(rgb(0.2, 0.4, 0.8, 1.0));
+        d.setShadeStyle(shadeStyle(s -> {
+            s.setFragmentTransform(shader);
+            s.parameter("time", millis() * 0.01);
+        }));
+        d.rectangle(0, d.getHeight() / 4,
+                d.getWidth(), d.getHeight() / 2);
+
+    }
+
+}
+  }
+  @ ./mouse-circle openrndr:draw {
+    .meta [map graph.x 668 graph.y 438 expose [array red green blue] graph.comment {Custom openrndr:draw
+Circle following mouse with
+animated size}]
+    .code {extends SHARED.RNDRDraw;
+import org.openrndr.draw.*;
+import static SHARED.OPENRNDR.*;
+
+    @P(1)
+    @Type.Number(min = 0, max = 1, def = 0)
+    double red;
+    @P(2)
+    @Type.Number(min = 0, max = 1, def = 0)
+    double green;
+    @P(3)
+    @Type.Number(min = 0, max = 1, def = 0)
+    double blue;
+    
+    @Inject Property size;
+
+    @Override
+    public void setup() {
+        size.animator().whenDone(p -> p.to(1, 0.1).in(1.5, 0.3).easeInOut());
+    }
+    
+    
+    
+    @Override
+    public void draw(Drawer d) {
+        d.setFill(rgb(red, green, blue, 1.0));
+        d.setStroke(null);
+        d.circle(program.getMouse().getPosition(),
+                D(size) * d.getHeight() / 4);
+    }
+
+}
+    .red 0.8
+    .green 0.6
+    .blue 0.4
+  }
+  ~ ./logo!out ./logo-overlay!src
+  ~ ./logo-overlay!out ./out!in
+  ~ ./pulse!out ./vertices!regenerate
+  ~ ./mixer!out ./logo-overlay!in
+  ~ ./vertices!out ./mixer!in
+  ~ ./shader-rect!out ./mixer!src
+  ~ ./mouse-circle!out ./out!in
+}

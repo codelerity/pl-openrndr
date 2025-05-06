@@ -1,0 +1,33 @@
+hub {
+  enable-fileserver false
+  proxies {
+    root {
+      host localhost
+      port auto
+      id-pattern *
+      type-pattern *
+      exec {
+        command default
+        java-options {
+          -XstartOnFirstThread
+          -XX:+IgnoreUnrecognizedVMOptions
+          -Djava.awt.headless=true
+        }
+      }
+    }
+  }
+}
+compiler {
+  release 21
+}
+libraries {
+  "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib@2.1.10"
+  "pkg:maven/org.openrndr/openrndr-application-jvm@0.4.4"
+  "pkg:maven/org.openrndr/openrndr-gl3-jvm@0.4.4"
+}
+
+# <<<BUILD>>>
+include [file "openrndr.pxr"]
+
+# <<<RUN>>>
+/openrndr.start
