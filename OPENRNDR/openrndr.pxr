@@ -207,7 +207,7 @@ public abstract class RNDRComposite extends CoreCodeDelegate {
                   }
 
                   @Override
-                  public void draw(Drawer d, RenderTarget source) {
+                  public void draw(Drawer d, ColorBuffer source) {
                      \s
                   }
 
